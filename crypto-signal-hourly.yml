@@ -30,4 +30,4 @@ jobs:
           INTERVAL: 1h         # mude aqui quando quiser (ex: 15m, 4h)
           DAYS: 10
         run: |
-          python RUN_PYTHON.PY
+          python run_signal.py
