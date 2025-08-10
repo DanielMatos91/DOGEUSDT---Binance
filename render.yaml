@@ -2,19 +2,12 @@ services:
   - type: cron
     name: crypto-signal-hourly
     env: python
-    plan: free
-    schedule: "0 * * * *"   # roda todo hora no minuto 0 (UTC)
+    plan: starter
+    schedule: "0 * * * *"  # roda todo hora no minuto 0 (UTC)
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python run_signal.py"
     envVars:
-      - key: SYMBOL
-        value: DOGEUSDT
-      - key: INTERVAL
-        value: 1h
-      - key: DAYS
-        value: "10"
-      # As duas abaixo você preenche no dashboard para não vazar no repositório
       - key: TELEGRAM_TOKEN
-        sync: false
+        value: "seu_token"
       - key: TELEGRAM_CHAT_ID
-        sync: false
+        value: "seu_chat_id"
