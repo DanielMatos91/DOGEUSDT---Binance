@@ -1,0 +1,33 @@
+name: crypto-signal-hourly
+
+on:
+  schedule:
+    - cron: "2 * * * *"   # minuto 2 de cada hora (UTC)
+  workflow_dispatch:       # permite rodar manualmente pelo botão "Run workflow"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run signal sender
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SYMBOL: DOGEUSDT     # mude aqui quando quiser
+          INTERVAL: 1h         # mude aqui quando quiser (ex: 15m, 4h)
+          DAYS: 10
+        run: |
+          python run_signal.py
