@@ -2,7 +2,7 @@ name: crypto-signal-hourly
 
 on:
   schedule:
-    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC)
+    - cron: "2 * * * *"  # minuto 2 de cada hora (UTC)
   workflow_dispatch:
 
 jobs:
@@ -29,6 +29,7 @@ jobs:
           SYMBOL: DOGEUSDT
           INTERVAL: 1h
           DAYS: 10
-          USE_SPOT_ONLY: "1"   # <- importante para evitar 451 no Actions
+          USE_PROVIDER: BYBIT   # <- força usar Bybit (recomendado no Actions)
         run: |
           python run_signal.py
+
