@@ -1,16 +1,16 @@
 import os, time, requests
 import pandas as pd, numpy as np
 from datetime import datetime, timezone, timedelta
+from requests.exceptions import HTTPError
 
-# ===== Config por ENV (ajuste no workflow) =====
+# ===== Config por ENV =====
 SYMBOL   = os.getenv("SYMBOL", "DOGEUSDT")
 INTERVAL = os.getenv("INTERVAL", "1h")
 DAYS     = int(os.getenv("DAYS", "10"))
-
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ===== HTTP session com User-Agent + retry =====
+# ===== HTTP session (User-Agent + retry) =====
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0 (CryptoSignalBot/1.0)"})
 
@@ -21,8 +21,7 @@ def http_get(url, timeout=30, retries=3, backoff=2.0):
             r.raise_for_status()
             return r
         except requests.HTTPError as e:
-            # log básico
-            print(f"[HTTP] {e.response.status_code} for {url}")
+            print(f"[HTTP] {e.response.status_code if e.response else '??'} for {url}")
             if i == retries - 1:
                 raise
             time.sleep(backoff * (i + 1))
@@ -37,15 +36,13 @@ def send_telegram(text: str):
         print("Telegram não configurado (faltam envs).")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    r = http_get(url, timeout=20) if False else None  # só p/ uniformizar estrutura
     try:
-        r = requests.post(url, json=payload, timeout=20)
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=20)
         r.raise_for_status()
     except Exception as e:
         print("Falha ao enviar Telegram:", e)
 
-# ===== Coleta de klines com Fallback (Futures -> Spot) =====
+# ===== Coleta com Fallback (Futures -> Spot) =====
 INTERVAL_TO_MIN = {
     "1m":1,"3m":3,"5m":5,"15m":15,"30m":30,
     "1h":60,"2h":120,"4h":240,"6h":360,"8h":480,"12h":720,
@@ -62,7 +59,13 @@ def _paginate_klines(base_url, symbol, interval, days, limit=1500):
     frames = []
     for _ in range(iters):
         url = f"{base_url}?symbol={symbol}&interval={interval}&limit={limit}&endTime={to_ms(end)}"
-        data = http_get(url).json()
+        try:
+            resp = SESSION.get(url, timeout=30)
+            resp.raise_for_status()
+        except HTTPError as e:
+            e.status = getattr(e.response, "status_code", None)
+            raise
+        data = resp.json()
         if not data:
             break
         frames.append(pd.DataFrame(data))
@@ -74,15 +77,24 @@ def _paginate_klines(base_url, symbol, interval, days, limit=1500):
     return pd.concat(frames, ignore_index=True)
 
 def get_klines_with_fallback(symbol="DOGEUSDT", interval="1h", days=10):
-    # tenta FUTURES (pode dar 451 nos runners dos EUA)
-    try:
-        print("[Data] Tentando FUTURES (fapi)...")
-        df = _paginate_klines("https://fapi.binance.com/fapi/v1/klines", symbol, interval, days)
-        from_futures = True
-    except Exception as e:
-        print(f"[Data] Falhou FUTURES ({e}). Caindo para SPOT.")
+    # força SPOT-only se definido no ambiente (recomendado no GitHub Actions)
+    if os.getenv("USE_SPOT_ONLY") == "1":
+        print("[Data] SPOT only (USE_SPOT_ONLY=1).")
         df = _paginate_klines("https://api.binance.com/api/v3/klines", symbol, interval, days)
-        from_futures = False
+        source = "SPOT_ONLY"
+    else:
+        try:
+            print("[Data] Tentando FUTURES (fapi)...")
+            df = _paginate_klines("https://fapi.binance.com/fapi/v1/klines", symbol, interval, days)
+            source = "FUTURES"
+        except HTTPError as e:
+            if getattr(e, "status", None) == 451:
+                print("[Data] 451 em FUTURES -> fallback para SPOT.")
+                df = _paginate_klines("https://api.binance.com/api/v3/klines", symbol, interval, days)
+                source = "SPOT_FALLBACK"
+            else:
+                print(f"[Data] HTTP {getattr(e,'status',None)} em FUTURES -> reerguendo.")
+                raise
 
     df.columns = [
         'open_time','open','high','low','close','volume',
@@ -96,8 +108,8 @@ def get_klines_with_fallback(symbol="DOGEUSDT", interval="1h", days=10):
         "close": df["close"].astype(float),
         "volume":df["volume"].astype(float)
     }).drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
-    print(f"[Data] Fonte: {'FUTURES' if from_futures else 'SPOT'} | Candles: {len(out)}")
-    return out
+    print(f"[Data] Fonte: {source} | Candles: {len(out)}")
+    return out, source
 
 # ===== Indicadores =====
 def compute_indicators(df, ema_fast=8, ema_slow=20, rsi_period=21, slope_window=5, vol_window=14):
@@ -135,12 +147,10 @@ def generate_signal_row(row):
 
 # ===== Execução =====
 def latest_signal(symbol=SYMBOL, interval=INTERVAL, days=DAYS):
-    df = get_klines_with_fallback(symbol, interval, days)
+    df, source = get_klines_with_fallback(symbol, interval, days)
     df = compute_indicators(df, 8, 20, 21, 5, 14)
     last = df.iloc[-1]
     signal = generate_signal_row(last)
-    sl = last["close"] * 0.98
-    tp = last["close"] * 1.04
     payload = {
         "symbol": symbol,
         "interval": interval,
@@ -152,9 +162,9 @@ def latest_signal(symbol=SYMBOL, interval=INTERVAL, days=DAYS):
         "ema_slow": float(last["EMA_SLOW"]),
         "slope": float(last["Slope"]),
         "volatility": float(last["Volatility"]) if not np.isnan(last["Volatility"]) else None,
-        "sl": float(sl),
-        "tp": float(tp),
-        "_source": "FALLBACK_FAPI_OR_SPOT",
+        "sl": float(last["close"]*0.98),
+        "tp": float(last["close"]*1.04),
+        "_source": source,
         "_generated_at_utc": datetime.now(timezone.utc).isoformat()
     }
     return payload
