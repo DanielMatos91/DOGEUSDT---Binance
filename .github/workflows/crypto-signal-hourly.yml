@@ -2,8 +2,8 @@ name: crypto-signal-hourly
 
 on:
   schedule:
-    - cron: "2 * * * *"   # minuto 2 de cada hora (UTC)
-  workflow_dispatch:       # permite rodar manualmente pelo botão "Run workflow"
+    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC)
+  workflow_dispatch:
 
 jobs:
   run:
@@ -26,8 +26,9 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SYMBOL: DOGEUSDT     # mude aqui quando quiser
-          INTERVAL: 1h         # mude aqui quando quiser (ex: 15m, 4h)
+          SYMBOL: DOGEUSDT
+          INTERVAL: 1h
           DAYS: 10
+          USE_SPOT_ONLY: "1"   # <- importante para evitar 451 no Actions
         run: |
           python run_signal.py
