@@ -2,12 +2,13 @@ name: crypto-signal-hourly
 
 on:
   schedule:
-    - cron: "2 * * * *"  # minuto 2 de cada hora (UTC)
-  workflow_dispatch:
+    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC) — dá tempo da vela fechar
+  workflow_dispatch:        # permite rodar manualmente
 
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -29,7 +30,7 @@ jobs:
           SYMBOL: DOGEUSDT
           INTERVAL: 1h
           DAYS: 10
-          USE_PROVIDER: BYBIT   # <- força usar Bybit (recomendado no Actions)
+          PROXY_BASE: https://dogeusdt.danielmatos-contatos.workers.dev  # sua URL do Worker
+          PROVIDER: okx                                                 # ou bybit
         run: |
           python run_signal.py
-
