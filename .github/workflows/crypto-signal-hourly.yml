@@ -2,7 +2,7 @@ name: crypto-signal-hourly
 
 on:
   schedule:
-    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC) — dá tempo da vela fechar
+    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC) — evita corrida com fechamento da vela
   workflow_dispatch:        # permite rodar manualmente
 
 jobs:
@@ -23,14 +23,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run signal sender
+      - name: Run signal sender (with TP/SL)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SYMBOL: DOGEUSDT
           INTERVAL: 1h
           DAYS: 10
-          PROXY_BASE: https://dogeusdt.danielmatos-contatos.workers.dev  # sua URL do Worker
-          PROVIDER: okx                                                 # ou bybit
+          # Proxy (Cloudflare Worker)
+          USE_PROXY: "True"
+          PROXY_BASE: https://dogeusdt.danielmatos-contatos.workers.dev
+          PROVIDER: okx
+
+          # Estratégia (pode ajustar via Secrets/env)
+          EMA_FAST: "8"
+          EMA_SLOW: "20"
+          RSI_PERIOD: "21"
+          SLOPE_WIN: "5"
+
+          # >>> TP/SL do mapeamento
+          TP_PCT: "0.02"   # 2%
+          SL_PCT: "0.05"   # 5%
         run: |
           python run_signal.py
