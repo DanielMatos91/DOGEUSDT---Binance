@@ -2,40 +2,30 @@ import os, time, requests
 import pandas as pd, numpy as np
 from datetime import datetime, timezone
 
-# ========== Config via env ==========
+# ===== Parâmetros da estratégia (ATUALIZADOS) =====
+# EMAf=8 | EMAl=20 | RSI=21 | Slope=5 | TP=6% | SL=4% | 1h
+EMAF       = 8
+EMAL       = 20
+RSI_PERIOD = 21
+SLOPE_N    = 5
+TP_PCT     = 0.06  # 6%
+SL_PCT     = 0.04  # 4%
+
+# ===== Config via env =====
 SYMBOL       = os.getenv("SYMBOL", "DOGEUSDT")
 INTERVAL     = os.getenv("INTERVAL", "1h")
 DAYS         = int(os.getenv("DAYS", "10"))
-
-# Proxy (Cloudflare Worker) + fonte (okx/bybit)
-USE_PROXY    = True  # deixe True para rodar no GitHub Actions sem bloqueio
-PROXY_BASE   = os.getenv("PROXY_BASE", "").rstrip("/")
-PROVIDER     = os.getenv("PROVIDER", "okx").lower()     # "okx" ou "bybit"
-
-# Telegram
+PROXY_BASE   = os.getenv("PROXY_BASE", "").rstrip("/")  # ex.: https://seu-worker.workers.dev
+PROVIDER     = os.getenv("PROVIDER", "okx").lower()     # okx | bybit
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Parâmetros da estratégia (melhor combinação encontrada para os sinais)
-EMA_FAST    = int(os.getenv("EMA_FAST", "8"))
-EMA_SLOW    = int(os.getenv("EMA_SLOW", "20"))
-RSI_PERIOD  = int(os.getenv("RSI_PERIOD", "21"))
-SLOPE_WIN   = int(os.getenv("SLOPE_WIN", "5"))
-
-# >>> TP/SL otimizado (mapeamento): TP = 2%, SL = 5%
-TP_PCT      = float(os.getenv("TP_PCT", "0.02"))  # 0.02 = 2%
-SL_PCT      = float(os.getenv("SL_PCT", "0.05"))  # 0.05 = 5%
-
-# ========== HTTP session ==========
+# ===== HTTP session =====
 SESSION = requests.Session()
 SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 (CryptoSignalBot/1.4)",
+    "User-Agent": "Mozilla/5.0 (CryptoSignalBot/1.3)",
     "Accept": "application/json"
 })
-
-# ========== Utils ==========
-INTERVAL_TO_MIN = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"6h":360,"8h":480,"12h":720,"1d":1440}
-def to_ms(dt): return int(dt.timestamp()*1000)
 
 def send_telegram(text: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -48,7 +38,11 @@ def send_telegram(text: str):
     except Exception as e:
         print("Falha ao enviar Telegram:", e)
 
-# ========== Coleta via Worker (OKX/BYBIT normalizado p/ formato Binance) ==========
+# ===== utils =====
+INTERVAL_TO_MIN = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"6h":360,"8h":480,"12h":720,"1d":1440}
+def to_ms(dt): return int(dt.timestamp()*1000)
+
+# ===== fetch via Worker (OKX/BYBIT normalizados) =====
 def fetch_via_worker(symbol, interval, days, limit=1500):
     assert PROXY_BASE, "Defina PROXY_BASE (URL do Cloudflare Worker)."
     step  = INTERVAL_TO_MIN[interval]
@@ -77,13 +71,8 @@ def fetch_via_worker(symbol, interval, days, limit=1500):
     out = out.drop_duplicates("timestamp").reset_index(drop=True)
     return out
 
-def get_data(symbol, interval, days):
-    if not USE_PROXY:
-        raise RuntimeError("Para Actions, USE_PROXY precisa ser True. (Local: você pode trocar.)")
-    return fetch_via_worker(symbol, interval, days)
-
-# ========== Indicadores & Sinal ==========
-def compute_indicators(df, ema_fast, ema_slow, rsi_period, slope_window, vol_window=14):
+# ===== indicadores =====
+def compute_indicators(df, ema_fast=8, ema_slow=20, rsi_period=21, slope_window=5, vol_window=14):
     dd = df.copy()
     dd["EMA_FAST"] = dd["close"].ewm(span=ema_fast, adjust=False).mean()
     dd["EMA_SLOW"] = dd["close"].ewm(span=ema_slow, adjust=False).mean()
@@ -97,81 +86,56 @@ def compute_indicators(df, ema_fast, ema_slow, rsi_period, slope_window, vol_win
     dd["RSI"] = 100 - (100/(1+rs))
     dd["RSI"] = dd["RSI"].fillna(method="bfill")
 
+    dd["Volatility"] = dd["close"].rolling(vol_window).std()
+
     def _slope(x):
         x = np.asarray(x); t = np.arange(len(x))
         if len(x) < 2: return np.nan
         m, _ = np.polyfit(t, x, 1)
         return m
-    dd["Slope"] = dd["close"].rolling(slope_window).apply(_slope, raw=False)
 
-    dd["Volatility"] = dd["close"].rolling(vol_window).std()
+    dd["Slope"] = dd["close"].rolling(slope_window).apply(_slope, raw=False)
     dd = dd.dropna().reset_index(drop=True)
     return dd
 
-def rule_signal(r):
-    if r["EMA_FAST"] > r["EMA_SLOW"] and r["RSI"] > 50 and r["Slope"] > 0:
+def generate_signal_row(row):
+    if row["EMA_FAST"] > row["EMA_SLOW"] and row["RSI"] > 50 and row["Slope"] > 0:
         return "BUY"
-    if r["EMA_FAST"] < r["EMA_SLOW"] and r["RSI"] < 50 and r["Slope"] < 0:
+    if row["EMA_FAST"] < row["EMA_SLOW"] and row["RSI"] < 50 and row["Slope"] < 0:
         return "SELL"
     return "HOLD"
 
-def latest_signal(symbol, interval, days):
-    df = get_data(symbol, interval, days)
-    df = compute_indicators(df, EMA_FAST, EMA_SLOW, RSI_PERIOD, SLOPE_WIN)
+# ===== principal =====
+def latest_signal(symbol=SYMBOL, interval=INTERVAL, days=DAYS):
+    df = fetch_via_worker(symbol, interval, days)
+    # usa os parâmetros atualizados
+    df = compute_indicators(df, EMAF, EMAL, RSI_PERIOD, SLOPE_N, 14)
     last = df.iloc[-1]
-    sig  = rule_signal(last)
-
-    price = float(last["close"])
-
-    # TP/SL definidos pela direção do sinal
-    tp_price = None
-    sl_price = None
-    if sig == "BUY":
-        tp_price = price * (1 + TP_PCT)
-        sl_price = price * (1 - SL_PCT)
-    elif sig == "SELL":
-        tp_price = price * (1 - TP_PCT)
-        sl_price = price * (1 + SL_PCT)
-
-    payload = {
-        "symbol": symbol,
-        "interval": interval,
-        "timestamp": str(last["timestamp"]),
-        "close": price,
-        "signal": sig,
-        "ema_fast": float(last["EMA_FAST"]),
-        "ema_slow": float(last["EMA_SLOW"]),
-        "rsi": float(last["RSI"]),
+    close = float(last["close"])
+    tp_px = float(close * (1 + TP_PCT))  # +6%
+    sl_px = float(close * (1 - SL_PCT))  # -4%
+    return {
+        "symbol": symbol, "interval": interval, "timestamp": str(last["timestamp"]),
+        "close": close, "signal": generate_signal_row(last),
+        "rsi": float(last["RSI"]), "ema_fast": float(last["EMA_FAST"]), "ema_slow": float(last["EMA_SLOW"]),
         "slope": float(last["Slope"]),
         "volatility": float(last["Volatility"]) if not np.isnan(last["Volatility"]) else None,
-        "tp_pct": TP_PCT,
-        "sl_pct": SL_PCT,
-        "tp_price": float(tp_price) if tp_price is not None else None,
-        "sl_price": float(sl_price) if sl_price is not None else None,
-        "_source": PROVIDER.upper(),
-        "_generated_at_utc": datetime.now(timezone.utc).isoformat()
+        "sl": sl_px, "tp": tp_px,
+        "_source": PROVIDER.upper(), "_generated_at_utc": datetime.now(timezone.utc).isoformat()
     }
-    return payload
 
 def main():
     out = latest_signal(SYMBOL, INTERVAL, DAYS)
-
-    # Monta mensagem
-    header = f"🪙 *{out['symbol']}* ({out['interval']})\n🕒 {out['timestamp']}\n📈 *Sinal:* {out['signal']}\n💰 Preço: {out['close']}"
-    indics = f"RSI: {out['rsi']:.2f} | EMAf: {out['ema_fast']:.6f} | EMAl: {out['ema_slow']:.6f}\nSlope: {out['slope']:.6f}"
-    tp_sl_line = ""
-    if out["signal"] in ("BUY", "SELL"):
-        tp_sl_line = (
-            f"🎯 TP ({out['tp_pct']*100:.1f}%): {out['tp_price']:.6f}\n"
-            f"🛑 SL ({out['sl_pct']*100:.1f}%): {out['sl_price']:.6f}"
-        )
-    else:
-        tp_sl_line = f"ℹ️ TP/SL aguardando direção (sinal = HOLD)\n" \
-                     f"· TP({out['tp_pct']*100:.1f}%) / SL({out['sl_pct']*100:.1f}%) serão calculados quando BUY/SELL surgir."
-
-    footer = f"Fonte: {out['_source']}"
-    msg = f"{header}\n{indics}\n{tp_sl_line}\n{footer}"
-
+    msg = (
+        f"🪙 *{out['symbol']}* ({out['interval']})\n"
+        f"🕒 {out['timestamp']}\n"
+        f"📈 *Sinal:* {out['signal']}\n"
+        f"💰 Preço: {out['close']}\n"
+        f"RSI: {out['rsi']:.2f} | EMAf: {out['ema_fast']:.6f} | EMAl: {out['ema_slow']:.6f}\n"
+        f"Slope: {out['slope']:.6f} | Vol: {out['volatility']}\n"
+        f"🛑 SL (−{SL_PCT*100:.1f}%): {out['sl']:.6f} | 🎯 TP (+{TP_PCT*100:.1f}%): {out['tp']:.6f}\n"
+        f"Fonte: {out['_source']}"
+    )
     print(msg)
     send_telegram(msg)
 
