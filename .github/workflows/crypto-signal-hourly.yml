@@ -1,36 +1,49 @@
-name: crypto-signal-hourly
+name: sinal-dogeusdt
 
 on:
+  workflow_dispatch: {}
+  push:
+    branches: [ path-2 ]
+    paths:
+      - 'run_signal.py'
+      - '.github/workflows/sinal-dogeusdt.yml'
+  # ⚠️ Cron dispara a partir do default branch (ex.: main).
+  # Por isso este arquivo deve estar no default branch.
   schedule:
-    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC) — dá tempo da vela fechar
-  workflow_dispatch:        # permite rodar manualmente
+    - cron: '*/30 * * * *'  # a cada 30 min (ajuste se quiser)
 
 jobs:
-  run:
+  run-signal:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout do código da branch path-2
         uses: actions/checkout@v4
+        with:
+          ref: path-2  # garante que rodamos o código dessa branch
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Instalar dependências
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests pandas numpy
+          fi
 
-      - name: Run signal sender
+      - name: Rodar sinal
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ===== ENV usados pelo run_signal.py =====
           SYMBOL: DOGEUSDT
           INTERVAL: 1h
           DAYS: 10
-          PROXY_BASE: https://dogeusdt.danielmatos-contatos.workers.dev  # sua URL do Worker
-          PROVIDER: okx                                                 # ou bybit
+          PROVIDER: okx            # okx | bybit
+          PROXY_BASE: ${{ secrets.PROXY_BASE }}  # ex.: https://seu-worker.workers.dev
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python run_signal.py
