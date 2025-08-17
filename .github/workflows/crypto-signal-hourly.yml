@@ -1,49 +1,48 @@
-name: sinal-dogeusdt
+name: crypto-signal-hourly
 
 on:
-  workflow_dispatch: {}
-  push:
-    branches: [ path-2 ]
-    paths:
-      - 'run_signal.py'
-      - '.github/workflows/sinal-dogeusdt.yml'
-  # ⚠️ Cron dispara a partir do default branch (ex.: main).
-  # Por isso este arquivo deve estar no default branch.
   schedule:
-    - cron: '*/30 * * * *'  # a cada 30 min (ajuste se quiser)
+    - cron: "2 * * * *"     # minuto 2 de cada hora (UTC) — evita corrida com fechamento da vela
+  workflow_dispatch:        # permite rodar manualmente
 
 jobs:
-  run-signal:
+  run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout do código da branch path-2
+      - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          ref: path-2  # garante que rodamos o código dessa branch
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Instalar dependências
+      - name: Install dependencies
         run: |
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install requests pandas numpy
-          fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Rodar sinal
+      - name: Run signal sender (with TP/SL)
         env:
-          # ===== ENV usados pelo run_signal.py =====
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SYMBOL: DOGEUSDT
           INTERVAL: 1h
           DAYS: 10
-          PROVIDER: okx            # okx | bybit
-          PROXY_BASE: ${{ secrets.PROXY_BASE }}  # ex.: https://seu-worker.workers.dev
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Proxy (Cloudflare Worker)
+          USE_PROXY: "True"
+          PROXY_BASE: https://dogeusdt.danielmatos-contatos.workers.dev
+          PROVIDER: okx
+
+          # Estratégia (pode ajustar via Secrets/env)
+          EMA_FAST: "8"
+          EMA_SLOW: "20"
+          RSI_PERIOD: "21"
+          SLOPE_WIN: "5"
+
+          # >>> TP/SL do mapeamento
+          TP_PCT: "0.02"   # 2%
+          SL_PCT: "0.05"   # 5%
         run: |
           python run_signal.py
