@@ -2,6 +2,15 @@ import os, time, requests
 import pandas as pd, numpy as np
 from datetime import datetime, timezone
 
+# ===== Parâmetros da estratégia (ATUALIZADOS) =====
+# EMAf=8 | EMAl=20 | RSI=21 | Slope=5 | TP=6% | SL=4% | 1h
+EMAF       = 8
+EMAL       = 20
+RSI_PERIOD = 21
+SLOPE_N    = 5
+TP_PCT     = 0.06  # 6%
+SL_PCT     = 0.04  # 4%
+
 # ===== Config via env =====
 SYMBOL       = os.getenv("SYMBOL", "DOGEUSDT")
 INTERVAL     = os.getenv("INTERVAL", "1h")
@@ -99,28 +108,53 @@ def generate_signal_row(row):
 # ===== principal =====
 def latest_signal(symbol=SYMBOL, interval=INTERVAL, days=DAYS):
     df = fetch_via_worker(symbol, interval, days)
-    df = compute_indicators(df, 8, 20, 21, 5, 14)
+    # usa os parâmetros atualizados declarados acima
+    df = compute_indicators(df, EMAF, EMAL, RSI_PERIOD, SLOPE_N, 14)
     last = df.iloc[-1]
+    close = float(last["close"])
+    side  = generate_signal_row(last)
+
+    # Calcula TP/SL coerentes com o lado da operação
+    if side == "BUY":
+        tp_px = close * (1 + TP_PCT)
+        sl_px = close * (1 - SL_PCT)
+    elif side == "SELL":
+        tp_px = close * (1 - TP_PCT)
+        sl_px = close * (1 + SL_PCT)
+    else:
+        # HOLD: retorna parcial; o main decide não enviar
+        return {
+            "symbol": symbol, "interval": interval, "timestamp": str(last["timestamp"]),
+            "close": close, "signal": side,
+            "rsi": float(last["RSI"]), "ema_fast": float(last["EMA_FAST"]), "ema_slow": float(last["EMA_SLOW"]),
+            "slope": float(last["Slope"]),
+            "volatility": float(last["Volatility"]) if not np.isnan(last["Volatility"]) else None,
+            "_source": PROVIDER.upper(), "_generated_at_utc": datetime.now(timezone.utc).isoformat()
+        }
+
     return {
         "symbol": symbol, "interval": interval, "timestamp": str(last["timestamp"]),
-        "close": float(last["close"]), "signal": generate_signal_row(last),
+        "close": close, "signal": side,
         "rsi": float(last["RSI"]), "ema_fast": float(last["EMA_FAST"]), "ema_slow": float(last["EMA_SLOW"]),
         "slope": float(last["Slope"]),
         "volatility": float(last["Volatility"]) if not np.isnan(last["Volatility"]) else None,
-        "sl": float(last["close"]*0.98), "tp": float(last["close"]*1.04),
+        "sl": float(sl_px), "tp": float(tp_px),
         "_source": PROVIDER.upper(), "_generated_at_utc": datetime.now(timezone.utc).isoformat()
     }
 
 def main():
     out = latest_signal(SYMBOL, INTERVAL, DAYS)
+    if out["signal"] == "HOLD":
+        print("Sem sinal (HOLD).")
+        return
     msg = (
         f"🪙 *{out['symbol']}* ({out['interval']})\n"
         f"🕒 {out['timestamp']}\n"
-        f"📈 *Sinal:* {out['signal']}\n"
+        f"📈 *Sinal de ENTRADA:* {out['signal']}\n"
         f"💰 Preço: {out['close']}\n"
         f"RSI: {out['rsi']:.2f} | EMAf: {out['ema_fast']:.6f} | EMAl: {out['ema_slow']:.6f}\n"
         f"Slope: {out['slope']:.6f} | Vol: {out['volatility']}\n"
-        f"🛑 SL: {out['sl']:.6f} | 🎯 TP: {out['tp']:.6f}\n"
+        f"🛑 SL (−{SL_PCT*100:.1f}%): {out['sl']:.6f} | 🎯 TP (+{TP_PCT*100:.1f}%): {out['tp']:.6f}\n"
         f"Fonte: {out['_source']}"
     )
     print(msg)
