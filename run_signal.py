@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 # ===== Parâmetros da estratégia (ATUALIZADOS) =====
 # EMAf=8 | EMAl=20 | RSI=21 | Slope=5 | TP=6% | SL=4% | 1h
 EMAF       = 8
-EMAL       = 20
-RSI_PERIOD = 21
-SLOPE_N    = 5
+EMAL       = 18
+RSI_PERIOD = 14
+SLOPE_N    = 8
 TP_PCT     = 0.06  # 6%
-SL_PCT     = 0.04  # 4%
+SL_PCT     = 0.05  # 4%
 
 # ===== Config via env =====
 SYMBOL       = os.getenv("SYMBOL", "DOGEUSDT")
