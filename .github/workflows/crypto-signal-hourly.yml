@@ -37,12 +37,12 @@ jobs:
 
           # Estratégia (pode ajustar via Secrets/env)
           EMA_FAST: "8"
-          EMA_SLOW: "20"
-          RSI_PERIOD: "21"
-          SLOPE_WIN: "5"
+          EMA_SLOW: "18"
+          RSI_PERIOD: "14"
+          SLOPE_WIN: "8"
 
           # >>> TP/SL do mapeamento
-          TP_PCT: "0.02"   # 2%
+          TP_PCT: "0.06"   # 6%
           SL_PCT: "0.05"   # 5%
         run: |
           python run_signal.py
